@@ -5,6 +5,7 @@ from collections import Counter
 from openai import OpenAI
 import re
 from datetime import datetime
+import xml.etree.ElementTree as ET
 
 from database import get_db
 from models import User, Research
@@ -12,19 +13,19 @@ from auth import get_current_user
 from config import OPENAI_API_KEY
 
 router = APIRouter(prefix="/research", tags=["Research"])
-
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-# ==================================================
-# SEARCH ROUTE
-# ==================================================
 @router.post("/search")
 def search_research(
     topic: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
+    # ===============================
+    # CROSSREF (Analytics Source)
+    # ===============================
     url = f"https://api.crossref.org/works?query={topic}&rows=15"
     response = requests.get(url)
     data = response.json()
@@ -60,14 +61,45 @@ def search_research(
             if len(word) > 4:
                 keywords_counter[word] += 1
 
-        papers.append(
-            {
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "summary": abstract
+        })
+
+    # ===============================
+    # ARXIV (PDF Source)
+    # ===============================
+    arxiv_papers = []
+
+    try:
+        arxiv_url = f"http://export.arxiv.org/api/query?search_query=all:{topic}&start=0&max_results=5"
+        arxiv_response = requests.get(arxiv_url, timeout=5)
+
+        root = ET.fromstring(arxiv_response.content)
+        namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+
+        for entry in root.findall('atom:entry', namespace):
+            title = entry.find('atom:title', namespace).text.strip()
+            summary = entry.find('atom:summary', namespace).text.strip()
+            id_url = entry.find('atom:id', namespace).text
+            pdf_url = id_url.replace("/abs/", "/pdf/") + ".pdf"
+
+            authors = []
+            for author in entry.findall('atom:author', namespace):
+                authors.append(author.find('atom:name', namespace).text)
+
+            arxiv_papers.append({
                 "title": title,
                 "authors": authors,
-                "year": year,
-                "summary": abstract,
-            }
-        )
+                "year": None,
+                "summary": summary,
+                "pdf_link": pdf_url
+            })
+
+    except Exception:
+        arxiv_papers = []
 
     combined_text = " ".join([p["title"] for p in papers])
 
@@ -80,47 +112,29 @@ def search_research(
                     "content": """
 You are a senior academic research analyst.
 
-Your response MUST be detailed and structured exactly as:
+Your response MUST be structured as:
 
 ## Trend Summary
-(Multi-paragraph academic analysis)
+(text)
 
 ## Research Gaps
-- Gap 1
-- Gap 2
+- gap
 
 ## Suggested Research Questions
-1. Question 1
-2. Question 2
-
-Be analytical and thorough.
+1. question
 """
                 },
                 {
                     "role": "user",
-                    "content": f"""
-Topic: {topic}
-
-Research Titles:
-{combined_text}
-"""
+                    "content": f"Topic: {topic}\n\nResearch Titles:\n{combined_text}"
                 },
             ],
         )
 
         ai_analysis = ai_response.choices[0].message.content
 
-    except Exception as e:
-        print("OpenAI Error:", e)
-        ai_analysis = """## Trend Summary
-AI analysis temporarily unavailable.
-
-## Research Gaps
-- Unable to generate research gaps.
-
-## Suggested Research Questions
-1. Unable to generate research questions.
-"""
+    except Exception:
+        ai_analysis = "AI analysis unavailable."
 
     new_entry = Research(
         topic=topic,
@@ -139,141 +153,5 @@ AI analysis temporarily unavailable.
         "trend_by_year": dict(trend),
         "top_authors": dict(authors_counter.most_common(5)),
         "top_keywords": dict(keywords_counter.most_common(10)),
-        "results": papers,
+        "results": papers + arxiv_papers
     }
-
-
-# ==================================================
-# HISTORY ROUTE
-# ==================================================
-@router.get("/history")
-def get_history(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    history = (
-        db.query(Research)
-        .filter(Research.user_id == current_user.id)
-        .order_by(Research.created_at.desc())
-        .all()
-    )
-
-    return [
-        {
-            "id": item.id,
-            "topic": item.topic,
-            "ai_summary": item.ai_summary,
-            "created_at": item.created_at,
-        }
-        for item in history
-    ]
-
-
-# ==================================================
-# INSIGHTS ROUTE
-# ==================================================
-@router.get("/insights")
-def get_insights(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    history = (
-        db.query(Research)
-        .filter(Research.user_id == current_user.id)
-        .order_by(Research.created_at.asc())
-        .all()
-    )
-
-    if not history:
-        return {"message": "No research history available."}
-
-    total_searches = len(history)
-
-    topic_counts = Counter([item.topic for item in history])
-    most_common_topic = topic_counts.most_common(1)[0][0]
-
-    first_date = history[0].created_at
-    last_date = history[-1].created_at
-    span_days = (last_date - first_date).days + 1
-
-    avg_gap = span_days / total_searches if total_searches else 0
-
-    if total_searches >= 20:
-        behavior = "Intensive Investigator"
-    elif total_searches >= 10:
-        behavior = "Focused Researcher"
-    else:
-        behavior = "Curious Explorer"
-
-    intensity_score = round(total_searches / max(span_days, 1), 2)
-
-    return {
-        "total_searches": total_searches,
-        "most_common_topic": most_common_topic,
-        "research_span_days": span_days,
-        "average_gap_days": round(avg_gap, 2),
-        "activity_intensity": intensity_score,
-        "behavior_type": behavior,
-    }
-
-
-# ==================================================
-# OPPORTUNITY RADAR ROUTE
-# ==================================================
-@router.get("/opportunities")
-def get_research_opportunities(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    history = (
-        db.query(Research)
-        .filter(Research.user_id == current_user.id)
-        .all()
-    )
-
-    if not history:
-        return {"opportunities": []}
-
-    topics = [item.topic for item in history]
-    combined_topics = ", ".join(topics)
-
-    try:
-        ai_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-You are a research strategist.
-
-Suggest 5 emerging or adjacent research opportunity topics
-based on the user's past research interests.
-
-Return ONLY a list.
-Each item on a new line.
-No numbering.
-No explanation.
-"""
-                },
-                {
-                    "role": "user",
-                    "content": f"User research history: {combined_topics}"
-                },
-            ],
-        )
-
-        content = ai_response.choices[0].message.content
-
-        lines = [
-            line.strip("-• ").strip()
-            for line in content.split("\n")
-            if line.strip()
-        ]
-
-        opportunities = lines[:5]
-
-    except Exception as e:
-        print("AI Opportunity Error:", e)
-        opportunities = []
-
-    return {"opportunities": opportunities}
