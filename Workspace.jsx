@@ -16,12 +16,7 @@ function Workspace() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem("lastResearch");
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      setData(parsed);
-      setTopic(parsed.topic || "");
-    }
+    localStorage.removeItem("lastResearch");
   }, []);
 
   const handleSearch = async () => {
@@ -43,8 +38,9 @@ function Workspace() {
         }
       );
 
+      console.log("API DATA:", response.data);
       setData(response.data);
-      localStorage.setItem("lastResearch", JSON.stringify(response.data));
+
     } catch (error) {
       console.error(error);
       alert("Something went wrong.");
@@ -60,25 +56,17 @@ function Workspace() {
     const gapsPart = text.split("## Research Gaps")[1]?.split("## Suggested Research Questions")[0] || "";
     const questionsPart = text.split("## Suggested Research Questions")[1] || "";
 
-    const gaps = gapsPart
-      .split("\n")
-      .filter(line => line.trim().match(/^[-•]/));
-
-    const questions = questionsPart
-      .split("\n")
-      .filter(line => line.trim().match(/^\d+\.|^[-•]/));
-
     return {
       summary: summaryPart.replace("## Trend Summary", "").trim(),
-      gaps,
-      questions
+      gaps: gapsPart.split("\n").filter(line => line.trim().startsWith("-")),
+      questions: questionsPart.split("\n").filter(line => line.trim().match(/^\d+/))
     };
   };
 
   const sections = parseSections(data?.ai_analysis);
 
   return (
-    <div className="relative text-white min-h-screen px-14 pt-10">
+    <div className="text-white min-h-screen px-14 pt-10">
 
       <h1 className="text-4xl font-bold mb-10 bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
         AI Research Workspace
@@ -90,12 +78,12 @@ function Workspace() {
           placeholder="Enter research topic..."
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
-          className="px-6 py-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 w-96 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+          className="px-6 py-4 rounded-2xl bg-white/5 border border-white/10 w-96"
         />
 
         <button
           onClick={handleSearch}
-          className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-cyan-600 rounded-2xl shadow-xl hover:scale-105 transition-all duration-300"
+          className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-cyan-600 rounded-2xl"
         >
           {loading ? "Analyzing..." : "Search"}
         </button>
@@ -104,51 +92,15 @@ function Workspace() {
       {data && (
         <div className="space-y-14">
 
-          {/* Trend Summary */}
-          <div className="bg-white/5 border border-white/10 p-8 rounded-3xl shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-6 text-indigo-400">
-              Trend Summary
-            </h2>
-            <p className="text-gray-300 whitespace-pre-wrap leading-relaxed">
+          <div className="bg-white/5 p-8 rounded-3xl">
+            <h2 className="text-2xl mb-6 text-indigo-400">Trend Summary</h2>
+            <p className="text-gray-300 whitespace-pre-wrap">
               {sections.summary}
             </p>
           </div>
 
-          {/* Research Gaps */}
-          {sections.gaps.length > 0 && (
-            <div className="bg-red-500/10 border border-red-500/30 p-8 rounded-3xl">
-              <h2 className="text-2xl font-semibold mb-6 text-red-400">
-                Identified Research Gaps
-              </h2>
-              <ul className="space-y-3">
-                {sections.gaps.map((gap, index) => (
-                  <li key={index} className="text-red-200">
-                    {gap.replace(/^[-•]\s*/, "")}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Research Questions */}
-          {sections.questions.length > 0 && (
-            <div className="bg-green-500/10 border border-green-500/30 p-8 rounded-3xl">
-              <h2 className="text-2xl font-semibold mb-6 text-green-400">
-                Suggested Research Questions
-              </h2>
-              <ul className="space-y-3">
-                {sections.questions.map((q, index) => (
-                  <li key={index} className="text-green-200">
-                    {q.replace(/^\d+\.|^[-•]\s*/, "")}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Graph */}
-          <div className="bg-white/5 border border-white/10 p-8 rounded-3xl shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-8 text-cyan-400">
+          <div className="bg-white/5 p-8 rounded-3xl">
+            <h2 className="text-2xl mb-6 text-cyan-400">
               Research Trend Over Time
             </h2>
 
@@ -163,52 +115,48 @@ function Workspace() {
                   <XAxis dataKey="year" stroke="#94a3b8" />
                   <YAxis stroke="#94a3b8" />
                   <Tooltip />
-                  <Line
-                    type="monotone"
-                    dataKey="count"
-                    stroke="#06b6d4"
-                    strokeWidth={3}
-                  />
+                  <Line type="monotone" dataKey="count" stroke="#06b6d4" strokeWidth={3} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Authors */}
-          <div className="bg-white/5 border border-white/10 p-8 rounded-3xl shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-6 text-pink-400">
-              Top Authors
-            </h2>
-            <div className="space-y-4">
-              {Object.entries(data.top_authors || {}).map(([author, count]) => (
-                <div
-                  key={author}
-                  className="flex justify-between bg-white/5 px-6 py-3 rounded-xl"
-                >
-                  <span>{author}</span>
-                  <span className="text-pink-300 font-semibold">
-                    {count}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* Research Papers */}
+          <div className="bg-white/5 p-8 rounded-3xl">
+            <h2 className="text-2xl mb-6 text-indigo-400">Research Papers</h2>
 
-          {/* Keywords */}
-          <div className="bg-white/5 border border-white/10 p-8 rounded-3xl shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-6 text-green-400">
-              Top Keywords
-            </h2>
-            <div className="flex flex-wrap gap-4">
-              {Object.entries(data.top_keywords || {}).map(([word, count]) => (
-                <div
-                  key={word}
-                  className="bg-green-600/20 px-4 py-2 rounded-full text-sm"
-                >
-                  {word} ({count})
-                </div>
-              ))}
-            </div>
+            {data.results?.length > 0 && (
+              <div className="space-y-6">
+                {data.results.map((paper, index) => (
+                  <div key={index} className="bg-white/5 p-6 rounded-2xl">
+                    <h3 className="text-cyan-300 font-semibold">
+                      {paper.title}
+                    </h3>
+
+                    <p className="text-sm text-gray-400">
+                      {paper.authors?.length
+                        ? paper.authors.join(", ")
+                        : "No authors available"}
+                    </p>
+
+                    <p className="text-sm text-gray-400 mt-2">
+                      {paper.summary}
+                    </p>
+
+                    {paper.pdf_link && (
+                      <a
+                        href={paper.pdf_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block mt-4 px-4 py-2 bg-indigo-600 rounded-xl"
+                      >
+                        Download PDF
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
         </div>
